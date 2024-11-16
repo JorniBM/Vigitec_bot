@@ -1,0 +1,12 @@
+# Ignorar el archivo .env que contiene las claves privadas
+.env
+
+# Ignorar archivos de logs
+*.log
+
+# Ignorar el cache de Python
+__pycache__/
+
+# Ignorar otros archivos sensibles que puedas tener
+*.db
+*.sqlite
