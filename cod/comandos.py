@@ -2,6 +2,7 @@ from pyrogram import filters
 import requests
 import random
 
+
 # Diccionario global para almacenar los resultados y el índice actual de cada usuario
 user_search_results = {}
 
@@ -14,7 +15,7 @@ def send_separated_messages(client, chat_id, mensajes):
 def start_command(app):
     @app.on_message(filters.command("start"))
     def start(client, message):
-        message.reply_text(f"¡Hola, {message.from_user.first_name}! Bienvenido al chatbot de análisis científico VIGITEC. Usa /help para ver los comandos disponibles.")
+        message.reply_text(f"¡Hola, {message.from_user.first_name}! Bienvenido al chatbot de búsqueda y análisis de información científica en fuentes abiertas Vigitec. Usa /help para ver los comandos disponibles.")
 
 # Comando /help: Muestra los comandos disponibles
 def help_command(app): 
@@ -23,8 +24,10 @@ def help_command(app):
         comandos = (
             "/buscar [término] - Realiza una búsqueda de artículos científicos en varias bases de datos usando el término indicado, mostrando los resultados más relevantes y recientes.\n"
             "/siguiente - Muestra el siguiente lote de resultados de la búsqueda actual, permitiendo explorar más opciones.\n"
-            "/favoritos - Añade un artículo a la lista de favoritos o muestra la lista de artículos favoritos guardados para futuras consultas.\n"
-            "/configurar - Configura las opciones del bot, como notificaciones y preferencias de búsqueda.\n"
+            "/favoritos [numero del articulo] - Añade un artículo a la lista de favoritos.\n"
+            "/favoritos - Muestra la lista de artículos favoritos guardados.\n"
+            "/favoritos eliminar [numero del articulo] - Elimina un artículo de la lista de favoritos.\n"
+            
         )
         message.reply_text(f"Aquí están los comandos disponibles:\n\n{comandos}")
 
@@ -46,8 +49,6 @@ def buscar_google_scholar(query):
     return response.json().get("organic_results", [])
 
 # Comando /buscar: Realiza una búsqueda en múltiples APIs con resúmenes completos cuando estén disponibles
-import random
-
 def buscar_command(app):
     @app.on_message(filters.command("buscar"))
     def buscar(client, message):
@@ -159,22 +160,37 @@ def siguiente_command(app):
 # Diccionario global para almacenar los favoritos de cada usuario
 user_favorites = {}
 
-# Comando /favoritos: Permite añadir y listar artículos favoritos
+# Comando /favoritos: Permite añadir, listar y eliminar artículos favoritos
 def favoritos_command(app): 
     @app.on_message(filters.command("favoritos"))
     def favoritos(client, message):
         user_id = message.from_user.id
         command_parts = message.text.split()
 
-        # Verifica si hay un número de artículo a agregar
-        if len(command_parts) > 1 and command_parts[1].isdigit():
-            article_number = int(command_parts[1])
+        # Verifica si se quiere eliminar un artículo
+        if len(command_parts) > 2 and command_parts[1].lower() == "eliminar" and command_parts[2].isdigit():
+            article_number = int(command_parts[2]) - 1  # Convertimos a índice (base 0)
+            favoritos = user_favorites.get(user_id, [])
+
+            if 0 <= article_number < len(favoritos):
+                removed_article = favoritos.pop(article_number)  # Elimina el artículo de favoritos
+                message.reply_text(f"Artículo '{removed_article['title']}' eliminado de tus favoritos.")
+                
+                # Actualiza la lista si queda vacía
+                if not favoritos:
+                    del user_favorites[user_id]
+            else:
+                message.reply_text("Número de artículo no válido en la lista de favoritos.")
+
+        # Verifica si hay un número de artículo para agregar
+        elif len(command_parts) > 1 and command_parts[1].isdigit():
+            article_number = int(command_parts[1]) - 1
             search_data = user_search_results.get(user_id)
 
-            if search_data and 0 <= article_number - 1 < len(search_data['results']):
-                article = search_data['results'][article_number - 1]
+            if search_data and 0 <= article_number < len(search_data['results']):
+                article = search_data['results'][article_number]
 
-                # Añadir el artículo a la lista de favoritos del usuario
+                # Añadir el artículo a favoritos
                 if user_id not in user_favorites:
                     user_favorites[user_id] = []
                 user_favorites[user_id].append(article)
@@ -183,67 +199,24 @@ def favoritos_command(app):
             else:
                 message.reply_text("El número de artículo no es válido o no hay una búsqueda en curso.")
 
-        # Si no se pasa ningún número, mostrar la lista de favoritos
+        # Mostrar la lista de favoritos
         else:
             favoritos = user_favorites.get(user_id, [])
             if favoritos:
-                # Genera una lista de favoritos
                 favoritos_text = "\n\n".join([
                     f"{i + 1}. {fav['source']}\nTítulo: {fav['title']}\nAutores: {fav['authors']}\nAño: {fav['year']}\nEnlace: {fav['url']}"
                     for i, fav in enumerate(favoritos)
                 ])
-                message.reply_text(f"Tus artículos favoritos:\n\n{favoritos_text}")
+                message.reply_text(f"Tus artículos favoritos:\n\n{favoritos_text}\n")
             else:
                 message.reply_text("No tienes artículos guardados en favoritos.")
 
 
 
-# Diccionario para almacenar la configuración de cada usuario
-user_settings = {}
 
-# Comando /configurar: Muestra las opciones de configuración disponibles
-def configurar_command(app):
-    @app.on_message(filters.command("configurar"))
-    def configurar(client, message):
-        user_id = message.from_user.id
-        
-        # Inicializar la configuración del usuario si no existe
-        if user_id not in user_settings:
-            user_settings[user_id] = {
-                "notificaciones": True,  # Notificaciones activadas por defecto
-                "idioma": "español"  # Idioma por defecto
-            }
-        
-        opciones = (
-            "Opciones de Configuración:\n"
-            "/configurar notificaciones: Activar o desactivar notificaciones\n"
-            "/configurar idioma: Cambiar el idioma (español, inglés)\n"
-            "Usa el comando seguido de la opción para cambiar la configuración."
-        )
-        message.reply_text(opciones)
 
-    # Subcomando para configurar notificaciones
-    @app.on_message(filters.command("configurar notificaciones"))
-    def configurar_notificaciones(client, message):
-        user_id = message.from_user.id
-        if user_id in user_settings:
-            # Alternar estado de notificaciones
-            user_settings[user_id]["notificaciones"] = not user_settings[user_id]["notificaciones"]
-            estado = "activadas" if user_settings[user_id]["notificaciones"] else "desactivadas"
-            message.reply_text(f"Notificaciones {estado}.")
-        else:
-            message.reply_text("Usa /configurar primero para ver las opciones.")
 
-    # Subcomando para configurar idioma
-    @app.on_message(filters.command("configurar idioma"))
-    def configurar_idioma(client, message):
-        user_id = message.from_user.id
-        idioma = " ".join(message.command[2:]).strip().lower()  # Capturar el idioma proporcionado
+  
         
-        if idioma not in ["español", "inglés"]:
-            message.reply_text("Idioma no válido. Opciones: español, inglés.")
-        else:
-            user_settings[user_id]["idioma"] = idioma
-            message.reply_text(f"Idioma configurado a {idioma}.")
 
 

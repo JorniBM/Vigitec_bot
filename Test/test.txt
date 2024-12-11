@@ -1,0 +1,157 @@
+def help_logic():
+    """
+    Genera el mensaje de ayuda con la lista de comandos disponibles.
+    """
+    return (
+        "Aquí están los comandos disponibles:\n\n"
+        "/buscar [término] - Realiza una búsqueda de artículos científicos en varias bases de datos usando el término indicado, mostrando los resultados más relevantes y recientes.\n"
+        "/siguiente - Muestra el siguiente lote de resultados de la búsqueda actual, permitiendo explorar más opciones.\n"
+        "/favoritos - Añade un artículo a la lista de favoritos o muestra la lista de artículos favoritos guardados para futuras consultas.\n"
+        
+    )
+
+def register_help_command(app):
+    """
+    Registra el comando /help en la aplicación.
+    """
+    @app.on_message(filters.command("help"))
+    def help_handler(client, message):
+        response = help_logic()
+        message.reply_text(response)
+
+
+def favoritos_logic(user_id, message_text):
+    """
+    Lógica para el comando /favoritos.
+    """
+    command_parts = message_text.split()
+
+    # Verifica si hay un número de artículo a agregar
+    if len(command_parts) > 1 and command_parts[1].isdigit():
+        article_number = int(command_parts[1])
+        search_data = user_search_results.get(user_id)
+
+        if search_data and 0 <= article_number - 1 < len(search_data['results']):
+            article = search_data['results'][article_number - 1]
+
+            # Añadir el artículo a la lista de favoritos del usuario
+            if user_id not in user_favorites:
+                user_favorites[user_id] = []
+            user_favorites[user_id].append(article)
+
+            return f"Artículo '{article['title']}' añadido a favoritos."
+        else:
+            return "El número de artículo no es válido o no hay una búsqueda en curso."
+
+    # Si no se pasa ningún número, mostrar la lista de favoritos
+    else:
+        favoritos = user_favorites.get(user_id, [])
+        if favoritos:
+            # Genera una lista de favoritos
+            favoritos_text = "\n\n".join([
+                f"{i + 1}. {fav['source']}\nTítulo: {fav['title']}\nAutores: {fav['authors']}\nAño: {fav['year']}\nEnlace: {fav['url']}"
+                for i, fav in enumerate(favoritos)
+            ])
+            return f"Tus artículos favoritos:\n\n{favoritos_text}"
+        else:
+            return "No tienes artículos guardados en favoritos."
+
+
+def register_favoritos_command(app):
+    """
+    Registra el comando /favoritos en la aplicación.
+    """
+    @app.on_message(filters.command("favoritos"))
+    def favoritos_handler(client, message):
+        user_id = message.from_user.id
+        response = favoritos_logic(user_id, message.text)
+        message.reply_text(response)
+        
+
+
+
+        # Función para consultar CrossRef
+def buscar_crossref(query):
+    url = f"https://api.crossref.org/works?query={query}&rows=5&sort=score"
+    response = requests.get(url)
+    return response.json()["message"]["items"]
+
+# Función para la lógica de búsqueda
+def buscar_logic(query):
+    """
+    Lógica para realizar la búsqueda en varias APIs y devolver los resultados.
+    """
+    if not query:
+        return "Por favor, introduce un término de búsqueda. Ejemplo: /buscar machine learning"
+
+    # Consultar las APIs
+    
+    crossref_results = buscar_crossref(query)
+   
+
+    # Procesar resultados de CrossRef
+    resultados = []
+    for item in crossref_results:
+        resumen = item.get("abstract", "Resumen no disponible")
+        year = item.get("published-print", {}).get("date-parts", [[0]])[0][0] or 0
+        resultados.append({
+            "source": "CrossRef",
+            "title": item.get("title", ["No disponible"])[0],
+            "authors": ", ".join([author.get("given", "") + " " + author.get("family", "") for author in item.get("author", [])]),
+            "year": year,
+            "citation_count": item.get("is-referenced-by-count", 0),
+            "venue": item.get("container-title", ["No disponible"])[0],
+            "url": item.get("URL", "No disponible"),
+            "summary": resumen
+        })
+
+    # Ordenar por año y luego por cantidad de citas
+    resultados = sorted(
+        resultados,
+        key=lambda x: (int(x["year"]) if isinstance(x["year"], int) else 0, x.get("citation_count", 0)),
+        reverse=True
+    )
+
+    # Mezclar aleatoriamente los resultados antes de mostrar
+    random.shuffle(resultados)
+
+    return resultados
+
+# Función para mostrar resultados
+def mostrar_resultados(client, chat_id, user_id):
+    search_data = user_search_results.get(user_id)
+    if not search_data:
+        client.send_message(chat_id, "No hay resultados disponibles.")
+        return
+
+    results = search_data['results']
+    index = search_data['index']
+    next_index = index + 5
+
+    # Mostrar hasta 5 resultados con resumen incluido
+    message_list = results[index:next_index]
+    send_separated_messages(client, chat_id, [
+        f"{i+1}. {res['source']}\nTítulo: {res['title']}\nAutores: {res['authors']}\nAño: {res['year']}\nPublicación: {res['venue']}\nEnlace: {res['url']}\nResumen: {res['summary']}\nCitas: {res['citation_count']}\n{'-'*30}"
+        for i, res in enumerate(message_list)
+    ])                                                                                                                                        # Actualizar el índice para el siguiente grupo
+    user_search_results[user_id]['index'] = next_index
+
+    # Mostrar opción de "siguiente" si quedan más resultados
+    if next_index < len(results):
+        client.send_message(chat_id, "Escribe /siguiente para ver más resultados.")
+
+def register_buscar_command(app):
+    """
+    Registra el comando /buscar en la aplicación.
+    """
+    @app.on_message(filters.command("buscar"))
+    def buscar_handler(client, message):
+        query = " ".join(message.command[1:])  # Obtener la consulta de la búsqueda
+        resultados = buscar_logic(query)  # Obtener los resultados de la lógica de búsqueda
+
+        if isinstance(resultados, str):  # Si la respuesta es un mensaje de error
+            message.reply_text(resultados)
+        else:
+            user_id = message.from_user.id
+            user_search_results[user_id] = {'results': resultados, 'index': 0}  # Guardar los resultados y el índice para el usuario
+            mostrar_resultados(client, message.chat.id, user_id)  # Mostrar los primeros 5 resultados
